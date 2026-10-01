@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as path from 'node:path';
 
 const originalPlatform = process.platform;
 
@@ -105,7 +106,8 @@ vi.mock('./store.js', () => ({
     upsertSceneLaunchProfile: upsertSceneLaunchProfileMock,
 }));
 
-vi.mock('./ui/linux_wine.js', () => ({
+vi.mock('./ui/linux_wine.js', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('./ui/linux_wine.js')>()),
     findLinuxGamePid: findLinuxGamePidMock,
 }));
 
@@ -864,6 +866,85 @@ describe('AutoLauncher OCR scene activity fallback', () => {
             agentScriptPath: undefined,
         });
         expect(launcher.handleLunaAutomation).not.toHaveBeenCalled();
+    });
+
+    describe('Linux executable resolution', () => {
+        const scene = { id: 'scene-1', name: 'Visual Novel' };
+        const scriptPath = path.join(process.cwd(), 'package.json');
+
+        function setup(launcher: any) {
+            Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+            getSceneLaunchProfileForSceneMock.mockReturnValue({
+                sceneId: scene.id,
+                sceneName: scene.name,
+                textHookMode: 'agent',
+                ocrMode: 'none',
+                launchOverlay: false,
+                agentScriptPath: scriptPath,
+                launchDelaySeconds: 0,
+            });
+            launcher.getPidByProcessName = vi.fn().mockResolvedValue(0);
+        }
+
+        it('uses the configured exe when OBS yields nothing', async () => {
+            const { AutoLauncher } = await loadAutoLauncherModule();
+            const launcher = new AutoLauncher() as any;
+            setup(launcher);
+            getExecutableNameFromSourceMock.mockResolvedValue(null);
+            getGameExePathForSceneMock.mockReturnValue('/games/vn.exe');
+            launcher.getPidByProcessName = vi.fn().mockResolvedValue(4321);
+            startHookSessionMock.mockResolvedValue({ success: true });
+
+            await launcher.runTextHookAutomation(scene);
+
+            expect(launcher.getPidByProcessName).toHaveBeenCalledWith('vn.exe');
+            expect(startHookSessionMock).toHaveBeenCalledWith({
+                engine: 'agent',
+                exeName: 'vn.exe',
+                pidOverride: 4321,
+                source: 'auto-launcher',
+                sceneId: scene.id,
+                agentScriptPath: scriptPath,
+            });
+        });
+
+        it('ignores an OBS window class when an exe is configured', async () => {
+            const { AutoLauncher } = await loadAutoLauncherModule();
+            const launcher = new AutoLauncher() as any;
+            setup(launcher);
+            getExecutableNameFromSourceMock.mockResolvedValue('steam_app_123');
+            getGameExePathForSceneMock.mockReturnValue('/games/vn.exe');
+            launcher.getPidByProcessName = vi.fn().mockResolvedValue(4321);
+            startHookSessionMock.mockResolvedValue({ success: true });
+
+            await launcher.runTextHookAutomation(scene);
+
+            expect(launcher.getPidByProcessName).not.toHaveBeenCalledWith('steam_app_123');
+            expect(startHookSessionMock).toHaveBeenCalledWith(
+                expect.objectContaining({ exeName: 'vn.exe' }),
+            );
+        });
+
+        it('warns once when no exe can be resolved', async () => {
+            const { AutoLauncher } = await loadAutoLauncherModule();
+            const launcher = new AutoLauncher() as any;
+            setup(launcher);
+            getExecutableNameFromSourceMock.mockResolvedValue('steam_app_123');
+            getGameExePathForSceneMock.mockReturnValue('');
+            const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+            try {
+                await launcher.runTextHookAutomation(scene);
+                await launcher.runTextHookAutomation(scene);
+                const warnings = stderr.mock.calls.filter((call) =>
+                    String(call[0]).includes('Game executable'),
+                );
+                expect(warnings).toHaveLength(1);
+            } finally {
+                stderr.mockRestore();
+            }
+            expect(startHookSessionMock).not.toHaveBeenCalled();
+        });
     });
 
     it('resolves Linux target PIDs through procfs instead of a shell command', async () => {

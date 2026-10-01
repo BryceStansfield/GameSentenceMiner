@@ -147,6 +147,35 @@ export function findLinuxGamePid(exePath: string, procRoot = '/proc', selfPid = 
     return bestPid;
 }
 
+export interface ResolvedLinuxGameExecutable {
+    exeName: string;
+    exePath: string;
+    source: 'configured' | 'obs';
+}
+
+/** Pick the exe to hook on Linux; a window class is never accepted as an exe name. */
+export function resolveLinuxGameExecutable(opts: {
+    configuredExePath?: string | null;
+    obsDerivedName?: string | null;
+    procRoot?: string;
+    selfPid?: number;
+}): ResolvedLinuxGameExecutable | null {
+    const configured = (opts.configuredExePath ?? '').trim();
+    if (configured) {
+        const exeName = path.basename(configured.replace(/\\/g, '/'));
+        if (exeName) return { exeName, exePath: configured, source: 'configured' };
+    }
+    const derived = (opts.obsDerivedName ?? '').trim();
+    if (!derived) return null;
+    if (
+        derived.toLowerCase().endsWith('.exe') ||
+        findLinuxGamePid(derived, opts.procRoot ?? '/proc', opts.selfPid ?? process.pid) > 0
+    ) {
+        return { exeName: derived, exePath: derived, source: 'obs' };
+    }
+    return null;
+}
+
 function resolveFromPath(command: string, searchPath: string): string {
     if (!command) return '';
     if (path.isAbsolute(command)) return command;

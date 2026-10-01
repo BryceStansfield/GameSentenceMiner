@@ -46,7 +46,7 @@ import {
     startHookSession,
     stopHookSessionAndWait,
 } from './ui/texthook.js';
-import { findLinuxGamePid } from './ui/linux_wine.js';
+import { findLinuxGamePid, resolveLinuxGameExecutable } from './ui/linux_wine.js';
 
 type IntegratedTextHookEngine = "textractor" | "luna" | "agent" | "mages";
 
@@ -78,6 +78,7 @@ export class AutoLauncher {
     private lastLauncherPollAt: number = 0;
     private lastOcrPollAt: number = 0;
     private lastTextHookStartFailureKey: string = "";
+    private lastMissingTextHookTargetKey: string = "";
     private suppressedAutoTextHookSceneId: string = "";
     private suppressedAutoTextHookReason: string = "";
     private lastTextHookAutomationSceneId: string = "";
@@ -388,7 +389,14 @@ export class AutoLauncher {
 
     private async resolveSceneExecutableName(scene: ObsScene): Promise<string | null> {
         try {
-            const executableName = await getExecutableNameFromSource(scene.id);
+            let executableName: string | null | undefined = await getExecutableNameFromSource(scene.id);
+            if (process.platform === "linux") {
+                executableName =
+                    resolveLinuxGameExecutable({
+                        configuredExePath: getGameExePathForScene(scene.name),
+                        obsDerivedName: executableName,
+                    })?.exeName ?? null;
+            }
             if (!executableName || executableName.trim().length === 0) {
                 return null;
             }
@@ -954,6 +962,19 @@ export class AutoLauncher {
         return profile.engine;
     }
 
+    // Log once per (scene, exe) so polling does not spam the log.
+    private logMissingTextHookTarget(sceneId: string | undefined, exeName: string): void {
+        if (process.platform !== "linux") return;
+        const key = `${sceneId ?? ""}:${exeName}`;
+        if (this.lastMissingTextHookTargetKey === key) return;
+        this.lastMissingTextHookTargetKey = key;
+        this.warnInternal(
+            exeName
+                ? `AutoLauncher: no running process found for "${exeName}"; on Linux set the scene's Game executable in the Home tab.`
+                : `AutoLauncher: no game executable resolved for this scene; on Linux set the scene's Game executable in the Home tab.`
+        );
+    }
+
     private async handleIntegratedTextHookAutomation(
         exeName: string | null | undefined,
         engine: IntegratedTextHookEngine,
@@ -962,11 +983,13 @@ export class AutoLauncher {
         agentScriptPath?: string,
     ): Promise<void> {
         if (!exeName) {
+            this.logMissingTextHookTarget(sceneId, "");
             return;
         }
 
         const gamePid = await this.getPidByProcessName(exeName);
         if (gamePid <= 0) {
+            this.logMissingTextHookTarget(sceneId, exeName);
             return;
         }
 
@@ -1514,12 +1537,17 @@ export class AutoLauncher {
                 );
             }
 
-            // OBS window capture does not expose a process image on Linux.
-            // Reuse the executable configured for this scene so text-hook
-            // automation can still resolve the Wine process.
-            if ((!exeName || exeName.trim().length === 0) && process.platform === "linux") {
-                const configuredExe = getGameExePathForScene(currentScene.name).trim();
-                if (configuredExe) exeName = path.basename(configuredExe.replace(/\\/g, "/"));
+            // OBS window capture does not expose a process image on Linux, so
+            // prefer the scene's configured exe over any OBS-derived name.
+            if (process.platform === "linux") {
+                exeName =
+                    resolveLinuxGameExecutable({
+                        configuredExePath: getGameExePathForScene(currentScene.name),
+                        obsDerivedName: exeName,
+                    })?.exeName ?? null;
+                if (!exeName && textHookMode !== "none") {
+                    this.logMissingTextHookTarget(currentScene.id, "");
+                }
             }
 
             await this.runSavedTextHookProfileAutomation(currentScene, exeName);

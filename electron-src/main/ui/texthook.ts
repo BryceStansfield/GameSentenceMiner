@@ -23,7 +23,7 @@ import {
     isLinux,
     sanitizeFilename,
 } from '../util.js';
-import { resolveWineLaunch, findLinuxGamePid, type WineLaunchContext } from './linux_wine.js';
+import { resolveWineLaunch, findLinuxGamePid, resolveLinuxGameExecutable, type WineLaunchContext } from './linux_wine.js';
 import { startWineFridaConnection, type WineProcessConnection } from './wine_frida.js';
 import { gsmBackendUrl } from '../gsm_config.js';
 import {
@@ -719,6 +719,10 @@ export async function getActiveCapture(): Promise<ActiveCaptureInfo> {
             if (typeof found === 'string' && found.trim().length > 0) {
                 exeName = found.trim();
             }
+            if (isLinux()) {
+                // Only keep an OBS-derived name on Linux if it is a real exe.
+                exeName = resolveLinuxGameExecutable({ obsDerivedName: exeName })?.exeName ?? null;
+            }
         } catch (err) {
             emitLog(`Could not infer executable from active scene: ${(err as Error).message}`, 'warn');
         }
@@ -739,7 +743,7 @@ export async function getActiveCapture(): Promise<ActiveCaptureInfo> {
     if (isLinux() && scene?.name) {
         const exePath = getGameExePathForScene(scene.name).trim();
         if (exePath) {
-            if (!exeName) exeName = path.basename(exePath.replace(/\\/g, '/'));
+            exeName = resolveLinuxGameExecutable({ configuredExePath: exePath })?.exeName ?? null;
             const linuxPid = findLinuxGamePid(exePath);
             if (linuxPid > 0) {
                 pid = linuxPid;
@@ -1473,9 +1477,12 @@ export async function startHookSession(options: StartHookOptions = {}): Promise<
                 error: 'Set the game executable for this scene first (Home tab → Game executable).',
             };
         }
-        if (!exeName) {
-            exeName = path.basename(exePath.replace(/\\/g, '/'));
+        // The configured exe always wins; a supplied name may be an OBS window class.
+        const configuredName = resolveLinuxGameExecutable({ configuredExePath: exePath })?.exeName ?? '';
+        if (exeName && exeName.toLowerCase() !== configuredName.toLowerCase()) {
+            emitLog(`Ignoring supplied executable "${exeName}"; using configured "${configuredName}".`, 'warn');
         }
+        exeName = configuredName;
         wineLaunch = resolveWineLaunch(exePath, '/proc', process.pid, options.pidOverride);
         if (wineLaunch.linuxPid <= 0) {
             return {

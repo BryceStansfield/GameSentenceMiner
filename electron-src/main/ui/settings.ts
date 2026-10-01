@@ -90,10 +90,12 @@ import {
     setVisibleTabs,
     setWindowTransparencyTarget,
     setWindowTransparencyToolHotkey,
+    getGameExePathForScene,
     upsertSceneLaunchProfile,
     store,
 } from '../store.js';
 import type { SceneLaunchProfile } from '../store.js';
+import { resolveLinuxGameExecutable } from './linux_wine.js';
 import { APP_NAME, BASE_DIR, getSanitizedPythonEnv } from '../util.js';
 import { syncPythonDisplayLocale } from '../python_locale.js';
 import { getConfiguredSinglePort, getGsmProfileNames } from '../gsm_config.js';
@@ -898,6 +900,13 @@ async function resolveAgentScriptForScene(scene: { id: string; name: string }) {
 
     try {
         processName = (await getExecutableNameFromSource(scene.id)) ?? null;
+        if (process.platform === 'linux') {
+            processName =
+                resolveLinuxGameExecutable({
+                    configuredExePath: getGameExePathForScene(scene.name),
+                    obsDerivedName: processName,
+                })?.exeName ?? null;
+        }
     } catch (error) {
         console.warn('Failed to inspect scene process for agent script resolution:', error);
     }
