@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { exec } from 'node:child_process';
 import { getBaseDir } from '../data_dir.js';
+import { getAgentScriptsPath } from '../store.js';
 import { sanitizeTextHookText, setRuntimeTextHookMaxBufferSize } from './text_hook_sanitize.js';
 import type { StartHookResult, TextHookArchitecture, TextHookStartSource } from './texthook.js';
 import type { WineProcessConnection } from './wine_frida.js';
@@ -288,11 +289,20 @@ function resolveScriptPath(scriptPath: string): string | null {
     return stat.isFile() ? resolved : null;
 }
 
+function getLoaderCandidates(scriptPath: string): string[] {
+    const candidates = [path.join(path.dirname(scriptPath), 'libLoader.js')];
+    try {
+        // Scripts can live in subfolders while libLoader.js sits at the scripts root.
+        candidates.push(path.join(getAgentScriptsPath(), 'libLoader.js'));
+    } catch {
+        // Store unavailable; fall through to the cwd candidate.
+    }
+    candidates.push(DEFAULT_AGENT_LOADER);
+    return candidates.map((candidate) => path.resolve(candidate));
+}
+
 function resolveExistingLoader(scriptPath: string): string | null {
-    const candidates = [
-        path.join(path.dirname(scriptPath), 'libLoader.js'),
-        DEFAULT_AGENT_LOADER,
-    ];
+    const candidates = getLoaderCandidates(scriptPath);
     for (const candidate of candidates) {
         try {
             const resolved = path.resolve(candidate);
@@ -667,7 +677,7 @@ export async function startAgentHookSession(options: StartAgentHookOptions): Pro
     const loaderPath = resolveExistingLoader(scriptPath);
     if (!loaderPath) {
         await options.wineConnection?.close();
-        return { success: false, error: 'Agent loader missing. Expected libLoader.js next to the script.' };
+        return { success: false, error: `Agent loader missing. Searched: ${getLoaderCandidates(scriptPath).join(', ')}` };
     }
     setRuntimeTextHookMaxBufferSize(options.maxBufferSize);
     try {

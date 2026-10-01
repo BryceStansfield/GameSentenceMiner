@@ -3224,10 +3224,8 @@ export async function getExecutableNameFromSource(
             }
 
             if (inputProperties.inputSettings?.capture_window) {
-                const captureWindowValue = inputProperties.inputSettings
-                    .capture_window as string;
-
-                return parseLinuxXCompositeWindowValue(captureWindowValue).windowClass || null;
+                // capture_window holds a title/WM_CLASS, never an exe name.
+                return null;
             }
         }
 

@@ -3,7 +3,12 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { findLinuxGamePid, readProcEnviron, resolveWineLaunch } from './linux_wine.js';
+import {
+    findLinuxGamePid,
+    readProcEnviron,
+    resolveLinuxGameExecutable,
+    resolveWineLaunch,
+} from './linux_wine.js';
 
 const tempRoots: string[] = [];
 
@@ -84,6 +89,47 @@ describe('findLinuxGamePid', () => {
         const procRoot = makeProcRoot();
         writeProcEntry(procRoot, 500, { cmdline: ['other.exe'], comm: 'other.exe' });
         expect(findLinuxGamePid('game.exe', procRoot, 1)).toBe(0);
+    });
+});
+
+describe('resolveLinuxGameExecutable', () => {
+    it('prefers the configured exe over an OBS-derived value', () => {
+        const procRoot = makeProcRoot();
+        expect(
+            resolveLinuxGameExecutable({
+                configuredExePath: '/games/vn.exe',
+                obsDerivedName: 'other.exe',
+                procRoot,
+                selfPid: 1,
+            }),
+        ).toEqual({ exeName: 'vn.exe', exePath: '/games/vn.exe', source: 'configured' });
+    });
+
+    it('normalizes Windows-style configured paths', () => {
+        expect(resolveLinuxGameExecutable({ configuredExePath: 'C:\\Games\\Foo\\foo.exe' })?.exeName).toBe('foo.exe');
+    });
+
+    it('rejects a window class with no matching process', () => {
+        const procRoot = makeProcRoot();
+        expect(
+            resolveLinuxGameExecutable({ obsDerivedName: 'steam_app_123', procRoot, selfPid: 1 }),
+        ).toBeNull();
+    });
+
+    it('accepts an OBS-derived .exe name', () => {
+        const procRoot = makeProcRoot();
+        expect(resolveLinuxGameExecutable({ obsDerivedName: 'Foo.EXE', procRoot, selfPid: 1 })).toEqual({
+            exeName: 'Foo.EXE',
+            exePath: 'Foo.EXE',
+            source: 'obs',
+        });
+    });
+
+    it('accepts a non-.exe OBS name only when a matching process is running', () => {
+        const procRoot = makeProcRoot();
+        writeProcEntry(procRoot, 600, { cmdline: ['game.bin'], comm: 'game.bin', residentPages: 100 });
+        expect(resolveLinuxGameExecutable({ obsDerivedName: 'game.bin', procRoot, selfPid: 1 })?.source).toBe('obs');
+        expect(resolveLinuxGameExecutable({ obsDerivedName: 'missing.bin', procRoot, selfPid: 1 })).toBeNull();
     });
 });
 

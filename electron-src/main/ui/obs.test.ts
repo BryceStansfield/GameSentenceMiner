@@ -1482,7 +1482,7 @@ describe('linux xcomposite scene metadata', () => {
         obsDisconnectMock.mockResolvedValue(undefined);
     });
 
-    it('parses the window class from capture_window settings', async () => {
+    it('does not treat the capture_window class as an executable', async () => {
         const { getExecutableNameFromSource } = await loadObsModule();
 
         obsCallMock.mockImplementation(async (requestType: string) => {
@@ -1510,9 +1510,7 @@ describe('linux xcomposite scene metadata', () => {
             return {};
         });
 
-        await expect(getExecutableNameFromSource('scene-123')).resolves.toBe(
-            'steam_app_1809540'
-        );
+        await expect(getExecutableNameFromSource('scene-123')).resolves.toBeNull();
     });
 
     it('parses the title from capture_window settings', async () => {
